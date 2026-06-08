@@ -1,0 +1,11 @@
+fastapi==0.110.0
+uvicorn==0.28.0
+sqlalchemy==2.0.28
+pydantic==2.6.4
+pandas==2.2.1
+numpy==1.26.4
+scikit-learn==1.4.1.post1
+pydantic-settings==2.2.1
+pyjwt==2.8.0
+passlib[bcrypt]==1.7.4
+sqlite3-to-mysql==1.5.0; sys_platform == 'never_match'
