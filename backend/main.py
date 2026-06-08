@@ -1,5 +1,7 @@
 import json
-from datetime import datetime
+import bcrypt
+import jwt
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any, Tuple
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +11,23 @@ import database
 from database import get_db, Portfolio, RiskCategory, PortfolioHolding, Asset, RebalanceProposal, ProposedTrade, AuditLog, TaxLot
 from seeding import seed_database
 from agents import CrewOrchestrator
+
+JWT_SECRET = "wealthpilot_super_secret_jwt_sign_key_99238c8"
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_MINUTES = 120
+
+# Simple in-memory user store (seeded on startup)
+_users: Dict[str, dict] = {}
+
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def _check_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+def _make_token(email: str, role: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
+    return jwt.encode({"sub": email, "role": role, "exp": expire}, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 app = FastAPI(title="WealthPilot AI Core Backend", version="1.0.0")
 
@@ -25,10 +44,76 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
     database.init_db()
-    # Seed 5,000 portfolios (takes 2-3 seconds)
     seed_database(5000)
+    # Seed default users
+    _users["admin@wealthpilot.ai"] = {"password": _hash_password("Password123"), "role": "ADMIN", "name": "Admin User"}
+    _users["manager@wealthpilot.ai"] = {"password": _hash_password("Password123"), "role": "MANAGER", "name": "Portfolio Manager"}
+    _users["analyst@wealthpilot.ai"] = {"password": _hash_password("Password123"), "role": "ANALYST", "name": "Risk Analyst"}
 
-# Pydantic Schemas
+# ── Auth Schemas & Endpoints ──────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    first_name: str = ""
+    last_name: str = ""
+    role: str = "ANALYST"
+
+@app.post("/api/v1/auth/login")
+def login(req: LoginRequest):
+    user = _users.get(req.email)
+    if not user or not _check_password(req.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    token = _make_token(req.email, user["role"])
+    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
+
+@app.post("/api/v1/auth/register", status_code=201)
+def register(req: RegisterRequest):
+    if req.email in _users:
+        raise HTTPException(status_code=400, detail="User already exists.")
+    _users[req.email] = {"password": _hash_password(req.password), "role": req.role, "name": f"{req.first_name} {req.last_name}"}
+    return {"message": "User registered successfully.", "email": req.email}
+
+@app.get("/api/v1/auth/me")
+def me_endpoint(token: str = Query(...)):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        email = payload.get("sub", "")
+        user = _users.get(email, {})
+        return {"email": email, "role": payload.get("role", ""), "name": user.get("name", "")}
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+# ── Audit Logs Endpoint ────────────────────────────────────────────────────────
+
+@app.get("/api/v1/audit/logs")
+def get_audit_logs(
+    page: int = 1,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    total = db.query(AuditLog).count()
+    logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).offset((page - 1) * limit).limit(limit).all()
+    return {
+        "total": total,
+        "page": page,
+        "data": [
+            {
+                "id": l.id,
+                "portfolio_id": l.portfolio_id,
+                "event_type": l.event_type,
+                "details": l.details,
+                "timestamp": l.timestamp.isoformat() + "Z"
+            } for l in logs
+        ]
+    }
+
+# ── Portfolio & Rebalance Schemas ──────────────────────────────────────────────
+
 class RebalanceTriggerRequest(BaseModel):
     trigger_type: str = "Threshold"
     portfolio_ids: Optional[List[str]] = None
@@ -454,3 +539,4 @@ def take_approval_action(proposal_id: str, request: ApprovalActionRequest, db: S
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
