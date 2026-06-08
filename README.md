@@ -48,20 +48,23 @@ Sentinel was tested over a **3.42-year daily simulation** (Jan 1, 2023 to June 1
 
 ```mermaid
 graph TD
-    A[Vite React SPA] <-->|JWT Bearer Token| B[FastAPI Backend Core]
-    B <-->|SQLAlchemy ORM| C[SQLite/PostgreSQL DB]
-    B -->|Trigger Event| D[CrewAI Council Agents]
-    D -->|Evaluate & Clear| E[SEBI Compliance Engine]
-    D -->|Explain Attributions| F[SHAP Explainer]
-    E -->|Propose Decision| G[Approval Queue]
-    G -->|Human-in-the-Loop| H{PM Supervisor Override}
-    H -->|Approve| I[Order Execution & HIFO Lot Allocation]
-    H -->|Reject| J[Log Rejection to Audit Logs]
-    I -->|Log State Before/After| K[Immutable Audit Trail]
+    A["React Frontend (Vite)"] <--> B["FastAPI Backend"]
+    B <--> C["PostgreSQL Database"]
+
+    B --> D["CrewAI Agent Council"]
+    D --> E["Compliance Engine"]
+    D --> F["SHAP Explainability"]
+
+    E --> G["Approval Queue"]
+
+    G --> H{"Portfolio Manager Review"}
+
+    H -->|Approve| I["Trade Execution"]
+    H -->|Reject| J["Audit Log Entry"]
+
+    I --> K["Immutable Audit Trail"]
     J --> K
 ```
-
----
 
 ## 📁 Repository Structure
 
